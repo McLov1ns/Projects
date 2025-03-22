@@ -34,6 +34,24 @@ function PollutionMap() {
                 setLoading(false);
             });
     }, []);
+    // Удаление лого
+    useEffect(() => {
+        const removeLeafletFlag = () => {
+            const leafletFlag = document.querySelector('.leaflet-attribution-flag');
+            if (leafletFlag) {
+                leafletFlag.remove();
+                observer.disconnect();
+            }
+        };
+        const observer = new MutationObserver((mutations) => {
+            removeLeafletFlag();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        removeLeafletFlag();
+
+        return () => observer.disconnect();
+    }, []);
+
 
     const markers = useMemo(() => {
         return data.map((point, index) => (
@@ -55,7 +73,7 @@ function PollutionMap() {
     }
 
     return (
-        <MapContainer center={[55.75, 37.61]} zoom={10} style={{ height: "500px" }}>
+        <MapContainer center={[53.13, 107.61]} zoom={5} style={{ height: "80vh", width: "200vh" }}>
             <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
