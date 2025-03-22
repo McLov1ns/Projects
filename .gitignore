@@ -1,1 +1,5 @@
 pollution-backend/res_annotated.nc
+pollution-frontend/pollution-map/node_modules
+pollution-frontend/pollution-map/build
+pollution-frontend/pollution-map/node_modules
+pollution-frontend/pollution-map/node_modules
