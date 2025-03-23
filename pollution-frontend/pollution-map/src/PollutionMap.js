@@ -66,7 +66,7 @@ function PollutionMap() {
     if (error) {
         return <p>Ошибка при загрузке данных: {error.message}</p>;
     }
-    //
+    
     return (
         <div>
             <div>
