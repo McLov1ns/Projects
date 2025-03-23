@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "leaflet.heat": "^0.2.0",
     "react-leaflet-cluster": "^2.1.0"
   }
 }

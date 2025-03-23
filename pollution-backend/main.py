@@ -19,7 +19,6 @@ app.add_middleware(
 # Кэшируем загрузку данных
 @lru_cache(maxsize=1)
 def load_dataset():
-    # Указываем путь к файлу
     return xr.open_dataset("res_annotated.nc")
 
 @app.get("/pollution")
