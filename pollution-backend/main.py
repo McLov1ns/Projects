@@ -1,26 +1,44 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import xarray as xr
-import numpy as np
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+import sqlite3
 from fastapi.responses import JSONResponse
-from functools import lru_cache
 
 app = FastAPI()
 
-# Настройка CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Разрешить запросы с этого домена
-    allow_credentials=True,
-    allow_methods=["*"],  # Разрешить все методы (GET, POST, и т.д.)
-    allow_headers=["*"],  # Разрешить все заголовки
-)
+# Модель для входных данных
+class UserLogin(BaseModel):
+    login: str
+    password: str
 
-# Кэшируем загрузку данных
-@lru_cache(maxsize=1)
-def load_dataset():
-    return xr.open_dataset("res_annotated.nc")
+# Функция для проверки логина и пароля
+def authenticate_user(login: str, password: str):
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
 
+    # Ищем пользователя в базе данных по логину и паролю
+    cursor.execute('SELECT * FROM users WHERE login = ? AND password = ?', (login, password))
+    user = cursor.fetchone()
+
+    conn.close()
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    return user
+
+@app.post("/login")
+async def login(user: UserLogin):
+    authenticated_user = authenticate_user(user.login, user.password)
+    return {
+        "message": f"Добро пожаловать, {authenticated_user[1]}!",
+        "name": authenticated_user[1],  # Имя пользователя
+        "role": authenticated_user[4]   # Роль пользователя
+    }
+
+@app.post("/logout")
+async def logout():
+    return {"message": "Вы вышли из системы"}
+
+# Остальной код для /pollution
 @app.get("/pollution")
 async def get_pollution_data(time_index: int = 0, level_index: int = 0):
     try:
@@ -61,7 +79,7 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
             "type": "FeatureCollection",
             "features": features
         }
-        
+
         return JSONResponse(content=geojson_data)
     
     except Exception as e:
