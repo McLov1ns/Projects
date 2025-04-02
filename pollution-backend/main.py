@@ -1,9 +1,23 @@
 from fastapi import FastAPI, HTTPException, Depends
+import numpy as np
+import xarray as xr
 from pydantic import BaseModel
 import sqlite3
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Можно ограничить конкретным доменом
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def load_dataset():
+    return xr.open_dataset("res_annotated.nc")
 
 # Модель для входных данных
 class UserLogin(BaseModel):
