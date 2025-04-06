@@ -1,95 +1,105 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css'; // Импорт стилей Leaflet
-import 'leaflet.heat'; // Импорт библиотеки для тепловой карты
+import 'leaflet/dist/leaflet.css';
 
-// Убедитесь, что иконки маркеров загружены корректно
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41], // Размер иконки
-    iconAnchor: [12, 41], // Точка привязки иконки
-});
-
-L.Marker.prototype.options.icon = DefaultIcon;
 
 function PollutionMap() {
-    const [data, setData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+    const mapRef = useRef(null); // Храним карту
+    const overlayRef = useRef(null); // Храним текущий overlay
     const [timeIndex, setTimeIndex] = useState(0);
     const [levelIndex, setLevelIndex] = useState(0);
-
-    useEffect(() => {
-        axios.get(`http://127.0.0.1:8000/pollution?time_index=${timeIndex}&level_index=${levelIndex}`)
-            .then((response) => {
-                setData(response.data.features);
-                setLoading(false);
-            })
-            .catch((error) => {
-                console.error("Ошибка при загрузке данных:", error);
-                setError(error);
-                setLoading(false);
-            });
-    }, [timeIndex, levelIndex]);
-
-    // Инициализация тепловой карты
-    useEffect(() => {
-        if (data.length > 0) {
-            const heatMapData = data.map(point => [
-                point.geometry.coordinates[1],
-                point.geometry.coordinates[0],
-                point.properties.concentration
-            ]);
-
-            const map = L.map('map').setView([53.13, 107.61], 5);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-
-            L.heatLayer(heatMapData, { radius: 25 }).addTo(map);
-
-            return () => {
-                map.remove(); // Очистка карты при размонтировании компонента
-            };
-        }
-    }, [data]);
-
-    if (loading) {
-        return <p>Загрузка данных...</p>;
-    }
-
-    if (error) {
-        return <p>Ошибка при загрузке данных: {error.message}</p>;
-    }
+    const [currentTime, setCurrentTime] = useState("");
+    const [maxTimeIndex, setMaxTimeIndex] = useState(220);  // Начальный максимальный индекс времени
     
+    // Один раз создаём карту
+    useEffect(() => {
+        if (mapRef.current) return;
+
+        const map = L.map("map").setView([53.13, 107.61], 5);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "© OpenStreetMap contributors"
+        }).addTo(map);
+
+        mapRef.current = map;
+    }, []);
+
+    // Обновляем слой при изменении параметров
+    useEffect(() => {
+        if (!mapRef.current) return;
+    
+        const controller = new AbortController(); //создаём контроллер отмены
+        const imageUrl = `http://127.0.0.1:8000/pollution/image?time_index=${timeIndex}&level_index=${levelIndex}`;
+    
+        axios.get('http://127.0.0.1:8000/pollution/bounds', { signal: controller.signal })
+            .then(response => {
+                const { lat_min, lat_max, lon_min, lon_max } = response.data;
+                const bounds = [[lat_min, lon_min], [lat_max, lon_max]];
+
+                const preloadImage = new Image();
+                preloadImage.src = imageUrl;
+
+                preloadImage.onload = () => {
+                    if (overlayRef.current) {
+                        mapRef.current.removeLayer(overlayRef.current);
+                    }
+
+                    const overlay = L.imageOverlay(imageUrl, bounds, { opacity: 0.6 });
+                    overlay.addTo(mapRef.current);
+                    overlayRef.current = overlay;
+                };
+            })
+            .catch((err) => {
+                if (axios.isCancel(err)) {
+                    console.log("Запрос отменён");
+                } else {
+                    console.error("Ошибка загрузки:", err);
+                }
+            });
+    
+        return () => {
+            controller.abort(); // 💣 отменяем предыдущий запрос при следующем запуске useEffect
+        };
+    }, [timeIndex, levelIndex]);  
+
+    // Получаем время и максимальный индекс времени
+    useEffect(() => {
+        const fetchTime = async () => {
+            try {
+                const response = await axios.get(`http://127.0.0.1:8000/pollution/time?time_index=${timeIndex}`);
+                setCurrentTime(response.data.time);  // Сохраняем время в стейт
+                setMaxTimeIndex(response.data.max_time_index);  // Обновляем максимальный индекс времени
+            } catch (error) {
+                console.error("Ошибка получения времени:", error);
+            }
+        };
+
+        fetchTime();
+    }, [timeIndex]);
+
     return (
         <div>
             <div>
-                <label>Время: </label>
+                <label>Время: {currentTime}</label>
                 <input
-                    type="number"
+                    type="range"
                     value={timeIndex}
                     onChange={(e) => setTimeIndex(Number(e.target.value))}
                     min="0"
-                    max="220"
+                    max={maxTimeIndex}  // Используем динамически полученный максимальный индекс времени
                 />
             </div>
             <div>
-                <label>Уровень: </label>
+                <label>Вещество: {levelIndex}</label>
                 <input
-                    type="number"
+                    type="range"
                     value={levelIndex}
                     onChange={(e) => setLevelIndex(Number(e.target.value))}
                     min="0"
                     max="9"
                 />
             </div>
-            <div id="map" style={{ height: "80vh", width: "200vh" }}></div> {/* Элемент с id="map" */}
+            <div id="map" style={{ height: "80vh", width: "100%" }}></div>
         </div>
     );
 }

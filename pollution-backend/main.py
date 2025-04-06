@@ -1,10 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends
 import numpy as np
 import xarray as xr
+import pandas as pd
 from pydantic import BaseModel
 import sqlite3
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import matplotlib.pyplot as plt
+import io
 
 app = FastAPI()
 
@@ -18,46 +22,77 @@ app.add_middleware(
 
 def load_dataset():
     return xr.open_dataset("res_annotated.nc")
-
-# Модель для входных данных
-class UserLogin(BaseModel):
-    login: str
-    password: str
-
-# Функция для проверки логина и пароля
-def authenticate_user(login: str, password: str):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
-
-    # Ищем пользователя в базе данных по логину и паролю
-    cursor.execute('SELECT * FROM users WHERE login = ? AND password = ?', (login, password))
-    user = cursor.fetchone()
-
-    conn.close()
-
-    if user is None:
-        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
-    return user
-
-@app.post("/login")
-async def login(user: UserLogin):
-    authenticated_user = authenticate_user(user.login, user.password)
+@app.get("/pollution/bounds")
+async def get_bounds():
+    dataset = load_dataset()
+    lat = dataset["lat"].values
+    lon = dataset["lon"].values
     return {
-        "message": f"Добро пожаловать, {authenticated_user[1]}!",
-        "name": authenticated_user[1],  # Имя пользователя
-        "role": authenticated_user[4]   # Роль пользователя
+        "lat_min": float(lat.min()),
+        "lat_max": float(lat.max()),
+        "lon_min": float(lon.min()),
+        "lon_max": float(lon.max())
     }
 
-@app.post("/logout")
-async def logout():
-    return {"message": "Вы вышли из системы"}
+@app.get("/pollution/time")
+async def get_time(time_index: int = 0):
+    try:
+        dataset = load_dataset()  # Загружаем датасет
+        time = dataset["time"].values  # Получаем массив временных значений
+
+        base_date = pd.to_datetime("2023-01-01") 
+        time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
+
+        # Возвращаем время в удобном формате
+        return {
+            "time": time_as_datetime.strftime('%Y-%m-%d %H:%M:%S'),
+            "max_time_index": len(time) - 1  # Возвращаем максимальный индекс времени
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    
+@app.get("/pollution/image")
+async def get_pollution_image(time_index: int = 0, level_index: int = 0):
+    try:
+        dataset = load_dataset()
+        lat = dataset["lat"].values
+        lon = dataset["lon"].values
+        data = dataset["trajReconstructed"].values[0, time_index, level_index, :, :]
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        contour = ax.contourf(lon, lat, data, levels=20, cmap='plasma')
+        ax.axis('off')
+
+        #Добавим легенду справа
+        cbar = fig.colorbar(contour, ax=ax, orientation='vertical', shrink=0.7, pad=0.02)
+        cbar.set_label('Концентрация')
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1, transparent=True)
+        buf.seek(0)
+        plt.close(fig)
+
+        return StreamingResponse(buf, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Остальной код для /pollution
 @app.get("/pollution")
 async def get_pollution_data(time_index: int = 0, level_index: int = 0):
     try:
-        dataset = load_dataset()  # Используем кэшированный датасет
+        dataset = load_dataset()
         
+        # Получаем значение времени
+        time = dataset["time"].values
+        base_date = pd.to_datetime("1970-01-01")
+        time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
+        
+        # Преобразуем время в строку
+        time_str = time_as_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
         # Проверяем наличие переменных
         required_vars = ["lat", "lon", "trajReconstructed"]
         for var in required_vars:
@@ -91,10 +126,45 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
 
         geojson_data = {
             "type": "FeatureCollection",
-            "features": features
+            "features": features,
+            "time": time_str  # Добавляем время в ответ
         }
 
         return JSONResponse(content=geojson_data)
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    
+    # Модель для входных данных
+class UserLogin(BaseModel):
+    login: str
+    password: str
+
+# Функция для проверки логина и пароля
+def authenticate_user(login: str, password: str):
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    # Ищем пользователя в базе данных по логину и паролю
+    cursor.execute('SELECT * FROM users WHERE login = ? AND password = ?', (login, password))
+    user = cursor.fetchone()
+
+    conn.close()
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    return user
+
+@app.post("/login")
+async def login(user: UserLogin):
+    authenticated_user = authenticate_user(user.login, user.password)
+    return {
+        "message": f"Добро пожаловать, {authenticated_user[1]}!",
+        "name": authenticated_user[1],  # Имя пользователя
+        "role": authenticated_user[4]   # Роль пользователя
+    }
+
+@app.post("/logout")
+async def logout():
+    return {"message": "Вы вышли из системы"}
