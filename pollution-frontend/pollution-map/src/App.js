@@ -64,22 +64,26 @@ function App() {
   };
 
   return (
-    <div className="App">
-      <h1>Карта загрязнения</h1>
-      <PollutionMap />
+    <div className="app-container">
+      <header className="app-header">
+        <h1>Карта загрязнения</h1>
+        <div className="user-info">
+          {user ? (
+            <>
+              <p>{user.name} ({user.role})</p>
+              {user.role === 'Admin' && (
+                <button onClick={openCreateModal}>Создать аккаунт</button>
+              )}
+              <button onClick={handleLogout}>Выйти</button>
+            </>
+          ) : (
+            <button className="login-button" onClick={openModal}>Войти</button>
+          )}
+        </div>
+      </header>
 
-      <div className="user-info">
-        {user ? (
-          <>
-            <p>{user.name} ({user.role})</p>
-            {user.role === 'Admin' && (
-              <button onClick={openCreateModal}>Создать аккаунт</button>
-            )}
-            <button onClick={handleLogout}>Выйти</button>
-          </>
-        ) : (
-          <button className="login-button" onClick={openModal}>Войти</button>
-        )}
+      <div className="map-container">
+        <PollutionMap />
       </div>
 
       {/* Окно входа */}
@@ -140,6 +144,10 @@ function App() {
           </div>
         </div>
       )}
+
+      <footer className="footer">
+        <p>© 2025 Карта загрязнения. Все права защищены.</p>
+      </footer>
     </div>
   );
 }

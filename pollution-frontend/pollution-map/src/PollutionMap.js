@@ -78,30 +78,35 @@ function PollutionMap() {
     }, [timeIndex]);
 
     return (
-        <div>
+        <div style={{ position: 'relative' }}>
+          {/* Контролы для времени и вещества */}
+          <div className="map-controls">
             <div>
-                <label>Время: {currentTime}</label>
-                <input
-                    type="range"
-                    value={timeIndex}
-                    onChange={(e) => setTimeIndex(Number(e.target.value))}
-                    min="0"
-                    max={maxTimeIndex}  // Используем динамически полученный максимальный индекс времени
-                />
+              <label>Время: {currentTime}</label>
+              <input
+                type="range"
+                value={timeIndex}
+                onChange={(e) => setTimeIndex(Number(e.target.value))}
+                min="0"
+                max={maxTimeIndex}
+              />
             </div>
             <div>
-                <label>Вещество: {levelIndex}</label>
-                <input
-                    type="range"
-                    value={levelIndex}
-                    onChange={(e) => setLevelIndex(Number(e.target.value))}
-                    min="0"
-                    max="9"
-                />
+              <label>Вещество: {levelIndex}</label>
+              <input
+                type="range"
+                value={levelIndex}
+                onChange={(e) => setLevelIndex(Number(e.target.value))}
+                min="0"
+                max="9"
+              />
             </div>
-            <div id="map" style={{ height: "80vh", width: "100%" }}></div>
+          </div>
+      
+          {/* Карта */}
+          <div id="map" style={{ height: "80vh", width: "100%" }}></div>
         </div>
-    );
+      );
 }
 
 export default PollutionMap;

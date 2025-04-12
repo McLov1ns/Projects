@@ -1,11 +1,13 @@
 import sqlite3
+from passlib.context import CryptContext
+
+# Создаем объект CryptContext для работы с хэшированием
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def create_database():
-    # Подключаемся к базе данных (если базы нет, она будет создана)
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
 
-    # Создаем таблицу пользователей (если она не существует)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,18 +18,21 @@ def create_database():
     )
     ''')
 
-    # Добавляем две записи (если они еще не существуют)
+    # Хэшируем пароли перед добавлением
+    hashed_admin_password = pwd_context.hash("admin123")
+    hashed_employee_password = pwd_context.hash("employee123")
+
     cursor.execute('''
     INSERT OR IGNORE INTO users (name, login, password, role)
-    VALUES 
-    ('Roman', 'admin', 'admin123', 'Admin'),
-    ('Petya', 'employee', 'employee123', 'Employee')
-    ''')
+    VALUES
+    ('Roman', 'admin', ?, 'Admin'),
+    ('Petya', 'employee', ?, 'Employee')
+    ''', (hashed_admin_password, hashed_employee_password))
 
-    # Сохраняем изменения и закрываем соединение
     conn.commit()
-    print("Database and table are set up!")
     conn.close()
+
+    print("Database and table are set up!")
 
 # Выполняем создание базы данных и добавление записей
 create_database()

@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import sqlite3
+from passlib.context import CryptContext
 
-app = FastAPI()
+router = APIRouter()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Модели данных
 class UserLogin(BaseModel):
     login: str
     password: str
@@ -19,17 +20,15 @@ class UserCreate(BaseModel):
 def authenticate_user(login: str, password: str):
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    
-    cursor.execute('SELECT * FROM users WHERE login = ? AND password = ?', (login, password))
+    cursor.execute('SELECT * FROM users WHERE login = ?', (login,))
     user = cursor.fetchone()
-    
     conn.close()
-    
-    if user is None:
+
+    if user is None or not pwd_context.verify(password, user[3]):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     return user
 
-@app.post("/login")
+@router.post("/login")
 async def login(user: UserLogin):
     authenticated_user = authenticate_user(user.login, user.password)
     return {
@@ -38,26 +37,23 @@ async def login(user: UserLogin):
         "role": authenticated_user[4]
     }
 
-@app.post("/create_user")
+@router.post("/create_user")
 async def create_user(user: UserCreate):
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    
-    # Проверка на существование пользователя
     cursor.execute('SELECT * FROM users WHERE login = ?', (user.login,))
     existing_user = cursor.fetchone()
-    
     if existing_user:
         conn.close()
         raise HTTPException(status_code=400, detail="Пользователь с таким логином уже существует")
-    
-    # Добавление нового пользователя в базу данных
+
+    hashed_password = pwd_context.hash(user.password)
+
     cursor.execute('''
-    INSERT INTO users (name, login, password, role)
-    VALUES (?, ?, ?, ?)
-    ''', (user.name, user.login, user.password, user.role))
-    
+        INSERT INTO users (name, login, password, role)
+        VALUES (?, ?, ?, ?)
+    ''', (user.name, user.login, hashed_password, user.role))
     conn.commit()
     conn.close()
-    
+
     return {"message": f"Пользователь {user.name} успешно создан!"}
