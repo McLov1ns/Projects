@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import io
 from auth import router as auth_router
 
@@ -40,8 +41,10 @@ async def get_bounds():
 async def get_time(time_index: int = 0):
     try:
         dataset = load_dataset()  # Загружаем датасет
-        time = dataset["time"].values  # Получаем массив временных значений
-
+        try:
+            time = dataset['Times'].values
+        except KeyError:
+            time = dataset['time'].values
         base_date = pd.to_datetime("2023-01-01") 
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
 
@@ -54,20 +57,31 @@ async def get_time(time_index: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
     
 @app.get("/pollution/image")
-async def get_pollution_image(time_index: int = 0, level_index: int = 0):
+async def get_pollution_image(time_index: int = 0, level_index: int = 0, species: str = "PM"):
     try:
         dataset = load_dataset()
         lat = dataset["lat"].values
         lon = dataset["lon"].values
-        data = dataset["trajReconstructed"].values[0, time_index, level_index, :, :]
+
+        # Получение названий веществ
+        raw_species = dataset["species_names"].values
+        species_names = ["".join([ch.decode("utf-8") for ch in row]).strip() for row in raw_species]
+
+        if species not in species_names:
+            raise HTTPException(status_code=404, detail=f"Вещество '{species}' не найдено")
+
+        species_index = species_names.index(species)
+
+        data = dataset["trajReconstructed"].isel(spec=species_index, time=time_index, levCoord=level_index).values
 
         fig, ax = plt.subplots(figsize=(6, 4))
         contour = ax.contourf(lon, lat, data, levels=20, cmap='plasma')
         ax.axis('off')
 
-        #Добавим легенду справа
         cbar = fig.colorbar(contour, ax=ax, orientation='vertical', shrink=0.7, pad=0.02)
         cbar.set_label('Концентрация')
 
@@ -77,6 +91,19 @@ async def get_pollution_image(time_index: int = 0, level_index: int = 0):
         plt.close(fig)
 
         return StreamingResponse(buf, media_type="image/png")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/pollution/species")
+async def get_species():
+    try:
+        dataset = load_dataset()
+        raw_species = dataset["species_names"].values
+        species_names = ["".join([ch.decode("utf-8") for ch in row]).strip() for row in raw_species]
+        return {"species_names": species_names}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -88,7 +115,10 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
         dataset = load_dataset()
         
         # Получаем значение времени
-        time = dataset["time"].values
+        try:
+            time = dataset['Times'].values
+        except KeyError:
+            time = dataset['time'].values
         base_date = pd.to_datetime("1970-01-01")
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
         
