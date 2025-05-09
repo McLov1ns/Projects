@@ -17,11 +17,15 @@ app.include_router(auth_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Можно ограничить конкретным доменом
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Добавляем переменную для хранения текущего файла
+current_file = "res_annotated_all.nc"
+
 def get_time_coord_name(dataset):
     for name in ["time", "Times"]:
         if name in dataset.dims or name in dataset.coords:
@@ -29,7 +33,36 @@ def get_time_coord_name(dataset):
     raise ValueError("В файле не найдена координата времени ('time' или 'Times')")
 
 def load_dataset():
-    return xr.open_dataset("res_annotated_all.nc")
+    return xr.open_dataset(current_file)
+
+@app.post("/set_dataset/{file_name}")
+async def set_dataset(file_name: str):
+    global current_file
+    if file_name in ["res_annotated_all.nc", "res_annotated.nc"]:
+        current_file = file_name
+        try:
+            # Проверяем, что файл доступен
+            with xr.open_dataset(current_file):
+                return {
+                    "message": f"Файл данных изменен на {file_name}",
+                    "success": True
+                }
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Ошибка загрузки файла: {str(e)}"
+            )
+    else:
+        raise HTTPException(
+            status_code=400, 
+            detail="Недопустимое имя файла. Допустимые значения: res_annotated_all.nc, res_annotated.nc"
+        )
+
+@app.get("/available_datasets")
+async def get_available_datasets():
+    return {"datasets": ["res_annotated_all.nc", "res_annotated.nc"]}
+
+# Остальные endpoint'ы остаются без изменений
 @app.get("/pollution/bounds")
 async def get_bounds():
     dataset = load_dataset()
@@ -45,7 +78,7 @@ async def get_bounds():
 @app.get("/pollution/time")
 async def get_time(time_index: int = 0):
     try:
-        dataset = load_dataset()  # Загружаем датасет
+        dataset = load_dataset()
         try:
             time = dataset['Times'].values
         except KeyError:
@@ -57,26 +90,44 @@ async def get_time(time_index: int = 0):
             base_date = pd.to_datetime("2023-01-01") 
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
 
-        # Возвращаем время в удобном формате
         return {
             "time": time_as_datetime.strftime('%Y-%m-%d %H:%M:%S'),
-            "max_time_index": len(time) - 1  # Возвращаем максимальный индекс времени
+            "max_time_index": len(time) - 1
         }
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-    
-@app.get("/pollution/image")
-async def get_pollution_image(time_index: int = 0, level_index: int = 0, species: str = "PM"):
+@app.get("/pollution/data_types")
+async def get_data_types():
     try:
         dataset = load_dataset()
+        available_types = []
+        
+        for data_type in ["qReference", "qInit", "qReconstructed", 
+                         "trajReference", "trajInit", "trajReconstructed"]:
+            if data_type in dataset:
+                available_types.append(data_type)
+        
+        return {"data_types": available_types}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/pollution/image")
+async def get_pollution_image(
+    time_index: int = 0, 
+    level_index: int = 0, 
+    species: str = "PM",
+    data_type: str = "trajReconstructed"
+):
+    try:
+        dataset = load_dataset()
+        
+        if data_type not in dataset:
+            raise HTTPException(status_code=404, detail=f"Тип данных '{data_type}' не найден")
+            
         lat = dataset["lat"].values
         lon = dataset["lon"].values
 
-        # Получение названий веществ
         raw_species = dataset["species_names"].values
         species_names = ["".join([ch.decode("utf-8") for ch in row]).strip() for row in raw_species]
 
@@ -86,8 +137,7 @@ async def get_pollution_image(time_index: int = 0, level_index: int = 0, species
         species_index = species_names.index(species)
 
         time_coord = get_time_coord_name(dataset)
-        data = dataset["trajReconstructed"].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
-
+        data = dataset[data_type].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
 
         fig, ax = plt.subplots(figsize=(6, 4))
         contour = ax.contourf(lon, lat, data, levels=20, cmap='plasma')
@@ -106,8 +156,6 @@ async def get_pollution_image(time_index: int = 0, level_index: int = 0, species
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
 @app.get("/pollution/species")
 async def get_species():
     try:
@@ -118,24 +166,19 @@ async def get_species():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# Остальной код для /pollution
 @app.get("/pollution")
 async def get_pollution_data(time_index: int = 0, level_index: int = 0):
     try:
         dataset = load_dataset()
         
-        # Получаем значение времени
         time_coord = get_time_coord_name(dataset)
         time = dataset[time_coord].values
 
         base_date = pd.to_datetime("1970-01-01")
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
         
-        # Преобразуем время в строку
         time_str = time_as_datetime.strftime('%Y-%m-%d %H:%M:%S')
 
-        # Проверяем наличие переменных
         required_vars = ["lat", "lon", "trajReconstructed"]
         for var in required_vars:
             if var not in dataset:
@@ -145,18 +188,10 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
         lon = dataset["lon"].values
         trajReconstructed = dataset["trajReconstructed"].values
 
-        # Выбираем конкретный временной срез и уровень
         trajReconstructed_slice = trajReconstructed[0, time_index, level_index, :, :]
 
-        # Диагностика данных
-        print("Минимальное значение trajReconstructed:", np.nanmin(trajReconstructed_slice))
-        print("Максимальное значение trajReconstructed:", np.nanmax(trajReconstructed_slice))
-        print("Количество значений trajReconstructed > 0:", np.sum(trajReconstructed_slice > 0))
-
-        # Получаем индексы, где trajReconstructed > 0
         valid_indices = np.where(trajReconstructed_slice > 0)
 
-        # Создаем GeoJSON-объекты
         features = [
             {
                 "type": "Feature",
@@ -169,7 +204,7 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
         geojson_data = {
             "type": "FeatureCollection",
             "features": features,
-            "time": time_str  # Добавляем время в ответ
+            "time": time_str
         }
 
         return JSONResponse(content=geojson_data)

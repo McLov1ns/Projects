@@ -1,11 +1,14 @@
 import xarray as xr
-import pandas as pd
 
 # Открытие NetCDF-файла
-ds = xr.open_dataset("C:\\Projects\\pollution-backend\\res_annotated_direct.nc")
-dss = xr.open_dataset("C:\\Projects\\pollution-backend\\res_annotated_all.nc")
-print(dss)
+ds = xr.open_dataset("C:\\Projects\\pollution-backend\\res_annotated_all.nc")
+# print(ds)
 
+a = ds.variables['trajReconstructed']
+
+
+
+print(a)
 # try:
 #     time = ds['Times'].values
 # except KeyError:

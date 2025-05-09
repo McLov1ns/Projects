@@ -12,15 +12,17 @@ function PollutionMap() {
     const [maxTimeIndex, setMaxTimeIndex] = useState(220);
     const [speciesList, setSpeciesList] = useState([]);
     const [selectedSpecies, setSelectedSpecies] = useState("");
+    const [dataTypes, setDataTypes] = useState([]);
+    const [selectedDataType, setSelectedDataType] = useState("trajReconstructed");
+    const [availableDatasets, setAvailableDatasets] = useState([]);
+    const [selectedDataset, setSelectedDataset] = useState("res_annotated_all.nc");
     const [isPlaying, setIsPlaying] = useState(false);
     const playIntervalRef = useRef(null);
     const abortControllerRef = useRef(null);
-    const initialBoundsSet = useRef(false);
+    const [isLoading, setIsLoading] = useState(false);
 
     // Инициализация карты
     useEffect(() => {
-        if (mapRef.current) return;
-
         const map = L.map("map").setView([45, 10], 5);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             attribution: "© OpenStreetMap contributors"
@@ -28,13 +30,66 @@ function PollutionMap() {
 
         mapRef.current = map;
         loadInitialData();
+
+        return () => {
+            if (mapRef.current) {
+                mapRef.current.remove();
+            }
+        };
     }, []);
 
-    const loadInitialData = async () => {
+    // Загрузка доступных наборов данных
+    useEffect(() => {
+        axios.get("http://127.0.0.1:8000/available_datasets")
+            .then(response => {
+                setAvailableDatasets(response.data.datasets);
+            })
+            .catch(err => {
+                console.error("Ошибка загрузки списка наборов данных:", err);
+            });
+    }, []);
+
+    // Обработчик изменения набора данных
+    const handleDatasetChange = async (dataset) => {
+        setIsLoading(true);
         try {
-            const [boundsRes, speciesRes] = await Promise.all([
+            // Останавливаем воспроизведение если активно
+            if (isPlaying) {
+                clearInterval(playIntervalRef.current);
+                setIsPlaying(false);
+            }
+
+            // Отменяем текущие запросы
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+
+            // Меняем файл на сервере
+            const response = await axios.post(`http://127.0.0.1:8000/set_dataset/${dataset}`);
+            
+            if (response.data.success) {
+                setSelectedDataset(dataset);
+                // Полностью перезагружаем данные
+                await loadInitialData(true);
+                
+                // Сбрасываем состояние
+                setTimeIndex(1);
+                setLevelIndex(0);
+            }
+        } catch (err) {
+            console.error("Ошибка смены набора данных:", err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const loadInitialData = async (resetView = false) => {
+        try {
+            const [boundsRes, speciesRes, dataTypesRes, timeRes] = await Promise.all([
                 axios.get("http://127.0.0.1:8000/pollution/bounds"),
-                axios.get("http://127.0.0.1:8000/pollution/species")
+                axios.get("http://127.0.0.1:8000/pollution/species"),
+                axios.get("http://127.0.0.1:8000/pollution/data_types"),
+                axios.get(`http://127.0.0.1:8000/pollution/time?time_index=${timeIndex}`)
             ]);
 
             const bounds = boundsRes.data;
@@ -43,30 +98,41 @@ function PollutionMap() {
                 [bounds.lat_max, bounds.lon_max]
             );
             
-            // Устанавливаем границы только при первой загрузке
-            if (!initialBoundsSet.current) {
-                mapRef.current.fitBounds(mapBounds, {
-                    padding: [50, 50],
-                    maxZoom: 10
-                });
-                initialBoundsSet.current = true;
-            }
+            // Обновляем границы карты
+            mapRef.current.fitBounds(mapBounds, {
+                padding: [50, 50],
+                maxZoom: 10,
+                animate: resetView // Анимация только при смене файла
+            });
 
             const species = speciesRes.data.species_names;
             setSpeciesList(species);
             if (species.length > 0) {
                 setSelectedSpecies(species[0]);
             }
+
+            const types = dataTypesRes.data.data_types;
+            setDataTypes(types);
+            if (types.includes("trajReconstructed")) {
+                setSelectedDataType("trajReconstructed");
+            } else if (types.length > 0) {
+                setSelectedDataType(types[0]);
+            }
+
+            setCurrentTime(timeRes.data.time);
+            setMaxTimeIndex(timeRes.data.max_time_index);
+
+            // Обновляем слой данных
+            updatePollutionLayer();
         } catch (err) {
             console.error("Ошибка загрузки данных:", err);
         }
     };
 
     // Обновление слоя загрязнений
-    useEffect(() => {
-        if (!mapRef.current || !selectedSpecies) return;
+    const updatePollutionLayer = async () => {
+        if (!mapRef.current || !selectedSpecies || !selectedDataType || isLoading) return;
 
-        // Отменяем предыдущий запрос
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
@@ -74,41 +140,60 @@ function PollutionMap() {
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
-        const imageUrl = `http://127.0.0.1:8000/pollution/image?time_index=${timeIndex}&level_index=${levelIndex}&species=${selectedSpecies}`;
+        try {
+            const imageUrl = `http://127.0.0.1:8000/pollution/image?time_index=${timeIndex}&level_index=${levelIndex}&species=${selectedSpecies}&data_type=${selectedDataType}`;
 
-        axios.get('http://127.0.0.1:8000/pollution/bounds', { signal: controller.signal })
-            .then(response => {
-                const bounds = response.data;
-                const mapBounds = [[bounds.lat_min, bounds.lon_min], [bounds.lat_max, bounds.lon_max]];
+            const boundsRes = await axios.get('http://127.0.0.1:8000/pollution/bounds', { 
+                signal: controller.signal 
+            });
+            
+            const bounds = boundsRes.data;
+            const mapBounds = [[bounds.lat_min, bounds.lon_min], [bounds.lat_max, bounds.lon_max]];
 
-                const preloadImage = new Image();
-                preloadImage.src = imageUrl;
+            const preloadImage = new Image();
+            preloadImage.src = imageUrl;
 
-                preloadImage.onload = () => {
-                    if (controller.signal.aborted) return;
-
-                    if (overlayRef.current) {
-                        mapRef.current.removeLayer(overlayRef.current);
-                    }
-
-                    const overlay = L.imageOverlay(imageUrl, mapBounds, {
-                        opacity: 0.6,
-                        interactive: false
-                    });
-                    overlay.addTo(mapRef.current);
-                    overlayRef.current = overlay;
-                };
-            })
-            .catch((err) => {
-                if (!axios.isCancel(err)) {
-                    console.error("Ошибка загрузки карты:", err);
-                }
+            await new Promise((resolve, reject) => {
+                preloadImage.onload = resolve;
+                preloadImage.onerror = reject;
             });
 
-        return () => {
-            controller.abort();
+            if (controller.signal.aborted) return;
+
+            if (overlayRef.current) {
+                mapRef.current.removeLayer(overlayRef.current);
+            }
+
+            const overlay = L.imageOverlay(imageUrl, mapBounds, {
+                opacity: 0.6,
+                interactive: false
+            });
+            overlay.addTo(mapRef.current);
+            overlayRef.current = overlay;
+        } catch (err) {
+            if (!axios.isCancel(err)) {
+                console.error("Ошибка загрузки карты:", err);
+            }
+        }
+    };
+
+    useEffect(() => {
+        updatePollutionLayer();
+    }, [timeIndex, levelIndex, selectedSpecies, selectedDataType, selectedDataset]);
+
+    useEffect(() => {
+        const fetchTime = async () => {
+            try {
+                const response = await axios.get(`http://127.0.0.1:8000/pollution/time?time_index=${timeIndex}`);
+                setCurrentTime(response.data.time);
+                setMaxTimeIndex(response.data.max_time_index);
+            } catch (error) {
+                console.error("Ошибка получения времени:", error);
+            }
         };
-    }, [timeIndex, levelIndex, selectedSpecies]);
+
+        fetchTime();
+    }, [timeIndex]);
 
     // Остальной код без изменений
     const handleTimeSliderChange = (e) => {
@@ -127,22 +212,27 @@ function PollutionMap() {
         setIsPlaying(!isPlaying);
     };
 
-    useEffect(() => {
-        const fetchTime = async () => {
-            try {
-                const response = await axios.get(`http://127.0.0.1:8000/pollution/time?time_index=${timeIndex}`);
-                setCurrentTime(response.data.time);
-                setMaxTimeIndex(response.data.max_time_index);
-            } catch (error) {
-                console.error("Ошибка получения времени:", error);
-            }
-        };
-
-        fetchTime();
-    }, [timeIndex]);
-
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+            {isLoading && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2000,
+                    color: 'white',
+                    fontSize: '1.5rem'
+                }}>
+                    Загрузка данных...
+                </div>
+            )}
+            
             <div style={{ position: 'relative', flexGrow: 1 }}>
                 <div id="map" style={{ height: '100%', width: '100%' }}></div>
                 
@@ -158,6 +248,26 @@ function PollutionMap() {
                     width: '280px'
                 }}>
                     <div style={{ marginBottom: '15px' }}>
+                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Набор данных:</div>
+                        <select
+                            value={selectedDataset}
+                            onChange={(e) => handleDatasetChange(e.target.value)}
+                            disabled={isLoading}
+                            style={{ 
+                                width: '100%',
+                                padding: '5px',
+                                borderRadius: '4px',
+                                border: '1px solid #ddd'
+                            }}
+                        >
+                            {availableDatasets.map((dataset) => (
+                                <option key={dataset} value={dataset}>{dataset}</option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    {/* Остальные элементы управления без изменений */}
+                    <div style={{ marginBottom: '15px' }}>
                         <div style={{ marginBottom: '5px', fontWeight: '500' }}>Время: {currentTime}</div>
                         <input
                             type="range"
@@ -166,9 +276,11 @@ function PollutionMap() {
                             min="1"
                             max={maxTimeIndex}
                             style={{ width: '100%' }}
+                            disabled={isLoading}
                         />
                         <button 
                             onClick={togglePlay} 
+                            disabled={isLoading}
                             style={{ 
                                 marginTop: '8px',
                                 padding: '5px 10px',
@@ -177,7 +289,8 @@ function PollutionMap() {
                                 border: 'none',
                                 borderRadius: '4px',
                                 cursor: 'pointer',
-                                width: '100%'
+                                width: '100%',
+                                opacity: isLoading ? 0.5 : 1
                             }}
                         >
                             {isPlaying ? '⏸ Остановить' : '▶ Автовоспроизведение'}
@@ -190,9 +303,26 @@ function PollutionMap() {
                             value={levelIndex}
                             onChange={(e) => setLevelIndex(Number(e.target.value))}
                             min="0"
-                            max="9"
+                            max="31"
                             style={{ width: '100%' }}
                         />
+                    </div>
+                    <div style={{ marginBottom: '15px' }}>
+                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Тип данных:</div>
+                        <select
+                            value={selectedDataType}
+                            onChange={(e) => setSelectedDataType(e.target.value)}
+                            style={{ 
+                                width: '100%',
+                                padding: '5px',
+                                borderRadius: '4px',
+                                border: '1px solid #ddd'
+                            }}
+                        >
+                            {dataTypes.map((type) => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <div style={{ marginBottom: '5px', fontWeight: '500' }}>Вещество:</div>
