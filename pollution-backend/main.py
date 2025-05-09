@@ -22,9 +22,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+def get_time_coord_name(dataset):
+    for name in ["time", "Times"]:
+        if name in dataset.dims or name in dataset.coords:
+            return name
+    raise ValueError("В файле не найдена координата времени ('time' или 'Times')")
 
 def load_dataset():
-    return xr.open_dataset("res_annotated.nc")
+    return xr.open_dataset("res_annotated_all.nc")
 @app.get("/pollution/bounds")
 async def get_bounds():
     dataset = load_dataset()
@@ -45,7 +50,11 @@ async def get_time(time_index: int = 0):
             time = dataset['Times'].values
         except KeyError:
             time = dataset['time'].values
-        base_date = pd.to_datetime("2023-01-01") 
+        try:
+            base_date_str = dataset.attrs['startDateTime']
+            base_date = pd.to_datetime(base_date_str, format="%Y-%m-%d_%H:%M:%S")
+        except KeyError:
+            base_date = pd.to_datetime("2023-01-01") 
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
 
         # Возвращаем время в удобном формате
@@ -76,7 +85,9 @@ async def get_pollution_image(time_index: int = 0, level_index: int = 0, species
 
         species_index = species_names.index(species)
 
-        data = dataset["trajReconstructed"].isel(spec=species_index, time=time_index, levCoord=level_index).values
+        time_coord = get_time_coord_name(dataset)
+        data = dataset["trajReconstructed"].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
+
 
         fig, ax = plt.subplots(figsize=(6, 4))
         contour = ax.contourf(lon, lat, data, levels=20, cmap='plasma')
@@ -115,10 +126,9 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
         dataset = load_dataset()
         
         # Получаем значение времени
-        try:
-            time = dataset['Times'].values
-        except KeyError:
-            time = dataset['time'].values
+        time_coord = get_time_coord_name(dataset)
+        time = dataset[time_coord].values
+
         base_date = pd.to_datetime("1970-01-01")
         time_as_datetime = base_date + pd.to_timedelta(time[time_index], unit='s')
         

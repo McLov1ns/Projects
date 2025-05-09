@@ -14,99 +14,87 @@ function PollutionMap() {
     const [selectedSpecies, setSelectedSpecies] = useState("");
     const [isPlaying, setIsPlaying] = useState(false);
     const playIntervalRef = useRef(null);
+    const abortControllerRef = useRef(null);
+    const initialBoundsSet = useRef(false);
 
-    // Создание карты (один раз)
+    // Инициализация карты
     useEffect(() => {
         if (mapRef.current) return;
-    
-        axios.get("http://127.0.0.1:8000/pollution/bounds")
-            .then((response) => {
-                const { lat_min, lat_max, lon_min, lon_max } = response.data;
-                const centerLat = (lat_min + lat_max) / 2;
-                const centerLon = (lon_min + lon_max) / 2;
-    
-                const container = document.getElementById("map");
-                if (container && container._leaflet_id) {
-                    container._leaflet_id = null;
-                }
-    
-                const map = L.map("map").setView([centerLat, centerLon], 5);
-                L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                    attribution: "© OpenStreetMap contributors"
-                }).addTo(map);
-    
-                mapRef.current = map;
-            })
-            .catch((err) => {
-                console.error("Ошибка получения границ:", err);
-            });
-    }, []);
-    
-    // Загрузка списка веществ
-    useEffect(() => {
-        axios.get("http://127.0.0.1:8000/pollution/species")
-            .then((res) => {
-                const species = res.data.species_names;
-                setSpeciesList(species);
-                setSelectedSpecies(species[0]);
-            })
-            .catch((err) => {
-                console.error("Ошибка получения списка веществ:", err);
-            });
+
+        const map = L.map("map").setView([45, 10], 5);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: "© OpenStreetMap contributors"
+        }).addTo(map);
+
+        mapRef.current = map;
+        loadInitialData();
     }, []);
 
-    // Очистка интервала при размонтировании
-    useEffect(() => {
-        return () => {
-            if (playIntervalRef.current) {
-                clearInterval(playIntervalRef.current);
-            }
-        };
-    }, []);
+    const loadInitialData = async () => {
+        try {
+            const [boundsRes, speciesRes] = await Promise.all([
+                axios.get("http://127.0.0.1:8000/pollution/bounds"),
+                axios.get("http://127.0.0.1:8000/pollution/species")
+            ]);
 
-    const togglePlay = () => {
-        if (isPlaying) {
-            if (playIntervalRef.current) {
-                clearInterval(playIntervalRef.current);
-                playIntervalRef.current = null;
-            }
-        } else {
-            playIntervalRef.current = setInterval(() => {
-                setTimeIndex(prev => {
-                    const newIndex = prev + 1;
-                    if (newIndex > maxTimeIndex) {
-                        clearInterval(playIntervalRef.current);
-                        setIsPlaying(false);
-                        return 1; // Сброс к началу
-                    }
-                    return newIndex;
+            const bounds = boundsRes.data;
+            const mapBounds = L.latLngBounds(
+                [bounds.lat_min, bounds.lon_min],
+                [bounds.lat_max, bounds.lon_max]
+            );
+            
+            // Устанавливаем границы только при первой загрузке
+            if (!initialBoundsSet.current) {
+                mapRef.current.fitBounds(mapBounds, {
+                    padding: [50, 50],
+                    maxZoom: 10
                 });
-            }, 1000);
+                initialBoundsSet.current = true;
+            }
+
+            const species = speciesRes.data.species_names;
+            setSpeciesList(species);
+            if (species.length > 0) {
+                setSelectedSpecies(species[0]);
+            }
+        } catch (err) {
+            console.error("Ошибка загрузки данных:", err);
         }
-        setIsPlaying(!isPlaying);
     };
 
-    // Обновление слоя при изменении параметров
+    // Обновление слоя загрязнений
     useEffect(() => {
         if (!mapRef.current || !selectedSpecies) return;
 
+        // Отменяем предыдущий запрос
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        
         const controller = new AbortController();
+        abortControllerRef.current = controller;
+
         const imageUrl = `http://127.0.0.1:8000/pollution/image?time_index=${timeIndex}&level_index=${levelIndex}&species=${selectedSpecies}`;
 
         axios.get('http://127.0.0.1:8000/pollution/bounds', { signal: controller.signal })
             .then(response => {
-                const { lat_min, lat_max, lon_min, lon_max } = response.data;
-                const bounds = [[lat_min, lon_min], [lat_max, lon_max]];
+                const bounds = response.data;
+                const mapBounds = [[bounds.lat_min, bounds.lon_min], [bounds.lat_max, bounds.lon_max]];
 
                 const preloadImage = new Image();
                 preloadImage.src = imageUrl;
 
                 preloadImage.onload = () => {
+                    if (controller.signal.aborted) return;
+
                     if (overlayRef.current) {
                         mapRef.current.removeLayer(overlayRef.current);
                     }
 
-                    const overlay = L.imageOverlay(imageUrl, bounds, { opacity: 0.6 });
+                    const overlay = L.imageOverlay(imageUrl, mapBounds, {
+                        opacity: 0.6,
+                        interactive: false
+                    });
                     overlay.addTo(mapRef.current);
                     overlayRef.current = overlay;
                 };
@@ -122,7 +110,23 @@ function PollutionMap() {
         };
     }, [timeIndex, levelIndex, selectedSpecies]);
 
-    // Получение текущего времени
+    // Остальной код без изменений
+    const handleTimeSliderChange = (e) => {
+        setTimeIndex(Number(e.target.value));
+    };
+
+    const togglePlay = () => {
+        if (isPlaying) {
+            clearInterval(playIntervalRef.current);
+            playIntervalRef.current = null;
+        } else {
+            playIntervalRef.current = setInterval(() => {
+                setTimeIndex(prev => (prev >= maxTimeIndex ? 1 : prev + 1));
+            }, 300);
+        }
+        setIsPlaying(!isPlaying);
+    };
+
     useEffect(() => {
         const fetchTime = async () => {
             try {
@@ -138,45 +142,77 @@ function PollutionMap() {
     }, [timeIndex]);
 
     return (
-        <div style={{ position: 'relative' }}>
-            <div className="map-controls">
-                <div>
-                    <label>Время: {currentTime}</label>
-                    <input
-                        type="range"
-                        value={timeIndex}
-                        onChange={(e) => setTimeIndex(Number(e.target.value))}
-                        min="1"
-                        max={maxTimeIndex}
-                    />
-                    <button onClick={togglePlay}>
-                        {isPlaying ? '⏸' : '▶'}
-                    </button>
-                </div>
-                <div>
-                    <label>Уровень: {levelIndex}</label>
-                    <input
-                        type="range"
-                        value={levelIndex}
-                        onChange={(e) => setLevelIndex(Number(e.target.value))}
-                        min="0"
-                        max="9"
-                    />
-                </div>
-                <div>
-                    <label htmlFor="species-select">Вещество:</label>
-                    <select
-                        id="species-select"
-                        value={selectedSpecies}
-                        onChange={(e) => setSelectedSpecies(e.target.value)}
-                    >
-                        {speciesList.map((specie) => (
-                            <option key={specie} value={specie}>{specie}</option>
-                        ))}
-                    </select>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+            <div style={{ position: 'relative', flexGrow: 1 }}>
+                <div id="map" style={{ height: '100%', width: '100%' }}></div>
+                
+                <div style={{
+                    position: 'absolute',
+                    top: '20px',
+                    right: '20px',
+                    zIndex: 1000,
+                    background: 'rgba(255,255,255,0.9)',
+                    padding: '15px',
+                    borderRadius: '8px',
+                    boxShadow: '0 0 15px rgba(0,0,0,0.2)',
+                    width: '280px'
+                }}>
+                    <div style={{ marginBottom: '15px' }}>
+                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Время: {currentTime}</div>
+                        <input
+                            type="range"
+                            value={timeIndex}
+                            onChange={handleTimeSliderChange}
+                            min="1"
+                            max={maxTimeIndex}
+                            style={{ width: '100%' }}
+                        />
+                        <button 
+                            onClick={togglePlay} 
+                            style={{ 
+                                marginTop: '8px',
+                                padding: '5px 10px',
+                                background: isPlaying ? '#e74c3c' : '#2ecc71',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                width: '100%'
+                            }}
+                        >
+                            {isPlaying ? '⏸ Остановить' : '▶ Автовоспроизведение'}
+                        </button>
+                    </div>
+                    <div style={{ marginBottom: '15px' }}>
+                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Уровень: {levelIndex}</div>
+                        <input
+                            type="range"
+                            value={levelIndex}
+                            onChange={(e) => setLevelIndex(Number(e.target.value))}
+                            min="0"
+                            max="9"
+                            style={{ width: '100%' }}
+                        />
+                    </div>
+                    <div>
+                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Вещество:</div>
+                        <select
+                            value={selectedSpecies}
+                            onChange={(e) => setSelectedSpecies(e.target.value)}
+                            style={{ 
+                                width: '100%',
+                                padding: '5px',
+                                borderRadius: '4px',
+                                border: '1px solid #ddd'
+                            }}
+                        >
+                            {speciesList.map((specie) => (
+                                <option key={specie} value={specie}>{specie}</option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
             </div>
-            <div id="map" style={{ height: "80vh", width: "100%" }}></div>
         </div>
     );
 }
