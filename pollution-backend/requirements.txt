@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+xarray
+numpy
+pandas
+matplotlib
+passlib[bcrypt]
+httpx
+locust

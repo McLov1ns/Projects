@@ -2,6 +2,7 @@ pollution-backend/res_annotated.nc
 pollution-backend/res_annotated_all.nc
 pollution-backend/res_annotated_direct.nc
 pollution-backend/test.py
+pollution-backend/venv
 pollution-frontend/pollution-map/node_modules
 pollution-frontend/pollution-map/build
 pollution-frontend/pollution-map/node_modules
