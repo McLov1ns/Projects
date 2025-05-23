@@ -10,6 +10,8 @@ function App() {
   const [password, setPassword] = useState('');
   const [user, setUser] = useState(null);
   const [message, setMessage] = useState('');
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
 
   // Поля для создания нового аккаунта
   const [newName, setNewName] = useState('');
@@ -63,6 +65,31 @@ function App() {
     }
   };
 
+  const handleFileUpload = async (e) => {
+    e.preventDefault();
+    if (!uploadFile) return;
+
+    const formData = new FormData();
+    formData.append('file', uploadFile);
+
+    try {
+      const response = await axios.post('http://127.0.0.1:8000/upload_dataset', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      setMessage(response.data.message);
+      // Обновляем список файлов
+      const datasetsRes = await axios.get('http://127.0.0.1:8000/available_datasets');
+      setAvailableDatasets(datasetsRes.data.datasets);
+      setShowUploadModal(false);
+    } catch (error) {
+      setMessage(error.response?.data?.detail || 'Ошибка загрузки файла');
+    }
+  };
+
   return (
     <div className="app-container">
       <header className="app-header">
@@ -71,8 +98,11 @@ function App() {
           {user ? (
             <>
               <p>{user.name} ({user.role})</p>
-              {user.role === 'Admin' && (
-                <button onClick={openCreateModal}>Создать аккаунт</button>
+              {user?.role === 'Admin' && (
+                <>
+                  <button onClick={() => setShowUploadModal(true)}>Загрузить файл</button>
+                  <button onClick={openCreateModal}>Создать аккаунт</button>
+                </>
               )}
               <button onClick={handleLogout}>Выйти</button>
             </>
@@ -83,8 +113,56 @@ function App() {
       </header>
 
       <div className="map-container">
-        <PollutionMap />
+        <PollutionMap isAuthenticated={!!user}/>
       </div>
+
+      {showUploadModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Загрузка файла .nc</h2>
+            <form onSubmit={handleFileUpload}>
+              <div style={{ marginBottom: '15px' }}>
+                <input 
+                  type="file" 
+                  accept=".nc"
+                  onChange={(e) => setUploadFile(e.target.files[0])}
+                  style={{ width: '100%' }}
+                />
+              </div>
+              <div>
+                <button 
+                  type="submit"
+                  style={{
+                    padding: '8px 15px',
+                    background: '#2ecc71',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    marginRight: '10px'
+                  }}
+                >
+                  Загрузить
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowUploadModal(false)}
+                  style={{
+                    padding: '8px 15px',
+                    background: '#e74c3c',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Окно входа */}
       {isModalOpen && (
@@ -151,5 +229,4 @@ function App() {
     </div>
   );
 }
-
 export default App;

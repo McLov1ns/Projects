@@ -103,7 +103,7 @@ async def get_data_types():
         dataset = load_dataset()
         available_types = []
         
-        for data_type in ["qReference", "qInit", "qReconstructed", 
+        for data_type in ["qReference", "qInit", "qRecontrsucted", 
                          "trajReference", "trajInit", "trajReconstructed"]:
             if data_type in dataset:
                 available_types.append(data_type)
@@ -111,6 +111,11 @@ async def get_data_types():
         return {"data_types": available_types}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def get_variable_data(dataset, data_type, species_index, time_index, level_index):
+    time_coord = get_time_coord_name(dataset)
+    data = dataset[data_type].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
+    return np.nan_to_num(data, nan=0.0)
 
 @app.get("/pollution/image")
 async def get_pollution_image(
@@ -124,7 +129,7 @@ async def get_pollution_image(
         
         if data_type not in dataset:
             raise HTTPException(status_code=404, detail=f"Тип данных '{data_type}' не найден")
-            
+        
         lat = dataset["lat"].values
         lon = dataset["lon"].values
 
@@ -136,8 +141,8 @@ async def get_pollution_image(
 
         species_index = species_names.index(species)
 
-        time_coord = get_time_coord_name(dataset)
-        data = dataset[data_type].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
+        # Получаем данные для выбранной переменной
+        data = get_variable_data(dataset, data_type, species_index, time_index, level_index)
 
         fig, ax = plt.subplots(figsize=(6, 4))
         contour = ax.contourf(lon, lat, data, levels=20, cmap='plasma')

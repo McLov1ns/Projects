@@ -3,7 +3,7 @@ import axios from "axios";
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-function PollutionMap() {
+function PollutionMap({ isAuthenticated }) {
     const mapRef = useRef(null);
     const overlayRef = useRef(null);
     const [timeIndex, setTimeIndex] = useState(1);
@@ -23,6 +23,8 @@ function PollutionMap() {
 
     // Инициализация карты
     useEffect(() => {
+        if (!isAuthenticated) return;
+
         const map = L.map("map").setView([45, 10], 5);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             attribution: "© OpenStreetMap contributors"
@@ -36,10 +38,11 @@ function PollutionMap() {
                 mapRef.current.remove();
             }
         };
-    }, []);
+    }, [isAuthenticated]);
 
     // Загрузка доступных наборов данных
     useEffect(() => {
+        if (!isAuthenticated) return;
         axios.get("http://127.0.0.1:8000/available_datasets")
             .then(response => {
                 setAvailableDatasets(response.data.datasets);
@@ -47,7 +50,7 @@ function PollutionMap() {
             .catch(err => {
                 console.error("Ошибка загрузки списка наборов данных:", err);
             });
-    }, []);
+    }, [isAuthenticated]);
 
     // Обработчик изменения набора данных
     const handleDatasetChange = async (dataset) => {
@@ -131,7 +134,7 @@ function PollutionMap() {
 
     // Обновление слоя загрязнений
     const updatePollutionLayer = async () => {
-        if (!mapRef.current || !selectedSpecies || !selectedDataType || isLoading) return;
+        if (!isAuthenticated || !mapRef.current || !selectedSpecies || !selectedDataType || isLoading) return;
 
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -234,117 +237,141 @@ function PollutionMap() {
             )}
             
             <div style={{ position: 'relative', flexGrow: 1 }}>
-                <div id="map" style={{ height: '100%', width: '100%' }}></div>
-                
-                <div style={{
-                    position: 'absolute',
-                    top: '20px',
-                    right: '20px',
-                    zIndex: 1000,
-                    background: 'rgba(255,255,255,0.9)',
-                    padding: '15px',
-                    borderRadius: '8px',
-                    boxShadow: '0 0 15px rgba(0,0,0,0.2)',
-                    width: '280px'
-                }}>
-                    <div style={{ marginBottom: '15px' }}>
-                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Набор данных:</div>
-                        <select
-                            value={selectedDataset}
-                            onChange={(e) => handleDatasetChange(e.target.value)}
-                            disabled={isLoading}
-                            style={{ 
-                                width: '100%',
-                                padding: '5px',
-                                borderRadius: '4px',
-                                border: '1px solid #ddd'
-                            }}
-                        >
-                            {availableDatasets.map((dataset) => (
-                                <option key={dataset} value={dataset}>{dataset}</option>
-                            ))}
-                        </select>
-                    </div>
-                    
-                    {/* Остальные элементы управления без изменений */}
-                    <div style={{ marginBottom: '15px' }}>
-                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Время: {currentTime}</div>
-                        <input
-                            type="range"
-                            value={timeIndex}
-                            onChange={handleTimeSliderChange}
-                            min="1"
-                            max={maxTimeIndex}
-                            style={{ width: '100%' }}
-                            disabled={isLoading}
-                        />
-                        <button 
-                            onClick={togglePlay} 
-                            disabled={isLoading}
-                            style={{ 
-                                marginTop: '8px',
-                                padding: '5px 10px',
-                                background: isPlaying ? '#e74c3c' : '#2ecc71',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                width: '100%',
-                                opacity: isLoading ? 0.5 : 1
-                            }}
-                        >
-                            {isPlaying ? '⏸ Остановить' : '▶ Автовоспроизведение'}
-                        </button>
-                    </div>
-                    <div style={{ marginBottom: '15px' }}>
-                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Уровень: {levelIndex}</div>
-                        <input
-                            type="range"
-                            value={levelIndex}
-                            onChange={(e) => setLevelIndex(Number(e.target.value))}
-                            min="0"
-                            max="31"
-                            style={{ width: '100%' }}
-                        />
-                    </div>
-                    <div style={{ marginBottom: '15px' }}>
-                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Тип данных:</div>
-                        <select
-                            value={selectedDataType}
-                            onChange={(e) => setSelectedDataType(e.target.value)}
-                            style={{ 
-                                width: '100%',
-                                padding: '5px',
-                                borderRadius: '4px',
-                                border: '1px solid #ddd'
-                            }}
-                        >
-                            {dataTypes.map((type) => (
-                                <option key={type} value={type}>{type}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <div style={{ marginBottom: '5px', fontWeight: '500' }}>Вещество:</div>
-                        <select
-                            value={selectedSpecies}
-                            onChange={(e) => setSelectedSpecies(e.target.value)}
-                            style={{ 
-                                width: '100%',
-                                padding: '5px',
-                                borderRadius: '4px',
-                                border: '1px solid #ddd'
-                            }}
-                        >
-                            {speciesList.map((specie) => (
-                                <option key={specie} value={specie}>{specie}</option>
-                            ))}
-                        </select>
-                    </div>
+                {/* Всегда показываем контейнер карты, но содержимое зависит от авторизации */}
+                <div id="map" style={{ height: '100%', width: '100%' }}>
+                    {!isAuthenticated && (
+                        <div style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            display: 'flex',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            backgroundColor: 'rgba(240,240,240,0.9)',
+                            zIndex: 1000,
+                            fontSize: '1.2rem',
+                            color: '#555',
+                            textAlign: 'center',
+                            padding: '20px'
+                        }}>
+                            Пожалуйста, войдите в систему для просмотра карты загрязнений
+                        </div>
+                    )}
                 </div>
+                
+                {isAuthenticated && (
+                    <div style={{
+                        position: 'absolute',
+                        top: '20px',
+                        right: '20px',
+                        zIndex: 1000,
+                        background: 'rgba(255,255,255,0.9)',
+                        padding: '15px',
+                        borderRadius: '8px',
+                        boxShadow: '0 0 15px rgba(0,0,0,0.2)',
+                        width: '280px'
+                    }}>
+                    
+                        <div style={{ marginBottom: '15px' }}>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Набор данных:</div>
+                            <select
+                                value={selectedDataset}
+                                onChange={(e) => handleDatasetChange(e.target.value)}
+                                disabled={isLoading}
+                                style={{ 
+                                    width: '100%',
+                                    padding: '5px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd'
+                                }}
+                            >
+                                {availableDatasets.map((dataset) => (
+                                    <option key={dataset} value={dataset}>{dataset}</option>
+                                ))}
+                            </select>
+                        </div>
+                        
+                        {/* Остальные элементы управления без изменений */}
+                        <div style={{ marginBottom: '15px' }}>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Время: {currentTime}</div>
+                            <input
+                                type="range"
+                                value={timeIndex}
+                                onChange={handleTimeSliderChange}
+                                min="1"
+                                max={maxTimeIndex}
+                                style={{ width: '100%' }}
+                                disabled={isLoading}
+                            />
+                            <button 
+                                onClick={togglePlay} 
+                                disabled={isLoading}
+                                style={{ 
+                                    marginTop: '8px',
+                                    padding: '5px 10px',
+                                    background: isPlaying ? '#e74c3c' : '#2ecc71',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    width: '100%',
+                                    opacity: isLoading ? 0.5 : 1
+                                }}
+                            >
+                                {isPlaying ? '⏸ Остановить' : '▶ Автовоспроизведение'}
+                            </button>
+                        </div>
+                        <div style={{ marginBottom: '15px' }}>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Уровень: {levelIndex}</div>
+                            <input
+                                type="range"
+                                value={levelIndex}
+                                onChange={(e) => setLevelIndex(Number(e.target.value))}
+                                min="0"
+                                max="31"
+                                style={{ width: '100%' }}
+                            />
+                        </div>
+                        <div style={{ marginBottom: '15px' }}>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Тип данных:</div>
+                            <select
+                                value={selectedDataType}
+                                onChange={(e) => setSelectedDataType(e.target.value)}
+                                style={{ 
+                                    width: '100%',
+                                    padding: '5px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd'
+                                }}
+                            >
+                                {dataTypes.map((type) => (
+                                    <option key={type} value={type}>{type}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Вещество:</div>
+                            <select
+                                value={selectedSpecies}
+                                onChange={(e) => setSelectedSpecies(e.target.value)}
+                                style={{ 
+                                    width: '100%',
+                                    padding: '5px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd'
+                                }}
+                            >
+                                {speciesList.map((specie) => (
+                                    <option key={specie} value={specie}>{specie}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
 }
-
 export default PollutionMap;

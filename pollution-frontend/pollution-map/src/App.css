@@ -19,7 +19,8 @@ html, body, #root, .app-container {
 }
 
 .map-container {
-  flex: 1;
+    flex-grow: 1;
+    position: relative;
 }
 
 .app-header {
