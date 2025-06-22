@@ -17,9 +17,21 @@ function PollutionMap({ isAuthenticated }) {
     const [availableDatasets, setAvailableDatasets] = useState([]);
     const [selectedDataset, setSelectedDataset] = useState("res_annotated_all.nc");
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [uploadMessage, setUploadMessage] = useState("");
     const playIntervalRef = useRef(null);
     const abortControllerRef = useRef(null);
-    const [isLoading, setIsLoading] = useState(false);
+
+    // Функция для загрузки списка наборов данных
+    const fetchDatasets = async () => {
+        try {
+            const response = await axios.get("http://127.0.0.1:8000/available_datasets");
+            setAvailableDatasets(response.data.datasets);
+        } catch (err) {
+            console.error("Ошибка загрузки списка наборов данных:", err);
+            setUploadMessage("Ошибка загрузки списка наборов данных");
+        }
+    };
 
     // Инициализация карты
     useEffect(() => {
@@ -32,6 +44,7 @@ function PollutionMap({ isAuthenticated }) {
 
         mapRef.current = map;
         loadInitialData();
+        fetchDatasets(); // Загружаем список наборов данных при монтировании
 
         return () => {
             if (mapRef.current) {
@@ -40,52 +53,69 @@ function PollutionMap({ isAuthenticated }) {
         };
     }, [isAuthenticated]);
 
-    // Загрузка доступных наборов данных
-    useEffect(() => {
-        if (!isAuthenticated) return;
-        axios.get("http://127.0.0.1:8000/available_datasets")
-            .then(response => {
-                setAvailableDatasets(response.data.datasets);
-            })
-            .catch(err => {
-                console.error("Ошибка загрузки списка наборов данных:", err);
-            });
-    }, [isAuthenticated]);
+    // Обработчик загрузки файла
+    const handleFileUpload = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
 
-    // Обработчик изменения набора данных
-    const handleDatasetChange = async (dataset) => {
+        if (!file.name.endsWith('.nc')) {
+            setUploadMessage("Ошибка: Пожалуйста, выберите файл формата .nc");
+            return;
+        }
+
         setIsLoading(true);
+        setUploadMessage("");
+
         try {
-            // Останавливаем воспроизведение если активно
-            if (isPlaying) {
-                clearInterval(playIntervalRef.current);
-                setIsPlaying(false);
-            }
+            const formData = new FormData();
+            formData.append("file", file);
 
-            // Отменяем текущие запросы
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
+            const response = await axios.post("http://127.0.0.1:8000/upload_dataset", formData, {
+                headers: { "Content-Type": "multipart/form-data" }
+            });
 
-            // Меняем файл на сервере
-            const response = await axios.post(`http://127.0.0.1:8000/set_dataset/${dataset}`);
-            
             if (response.data.success) {
-                setSelectedDataset(dataset);
-                // Полностью перезагружаем данные
-                await loadInitialData(true);
-                
-                // Сбрасываем состояние
-                setTimeIndex(1);
-                setLevelIndex(0);
+                setUploadMessage("Файл успешно загружен!");
+                setTimeout(fetchDatasets, 500); // Даем время файловой системе
+                const uploadedName = response.data.filename || file.name; // используем имя, возвращённое сервером
+                setSelectedDataset(uploadedName);
+                await handleDatasetChange(uploadedName);
             }
         } catch (err) {
-            console.error("Ошибка смены набора данных:", err);
+            setUploadMessage(err.response?.data?.detail || "Ошибка при загрузке файла");
         } finally {
             setIsLoading(false);
         }
     };
 
+    // Обработчик изменения набора данных
+    const handleDatasetChange = async (dataset) => {
+        setIsLoading(true);
+        setUploadMessage("");
+        try {
+            if (isPlaying) {
+                clearInterval(playIntervalRef.current);
+                setIsPlaying(false);
+            }
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            const response = await axios.post(`http://127.0.0.1:8000/set_dataset/${dataset}`);
+            if (response.data.success) {
+                setSelectedDataset(dataset);
+                await loadInitialData(true);
+                setTimeIndex(1);
+                setLevelIndex(0);
+            }
+        } catch (err) {
+            console.error("Ошибка смены набора данных:", err);
+            setUploadMessage(err.response?.data?.detail || "Ошибка при смене набора данных");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Функция загрузки начальных данных
     const loadInitialData = async (resetView = false) => {
         try {
             const [boundsRes, speciesRes, dataTypesRes, timeRes] = await Promise.all([
@@ -100,12 +130,10 @@ function PollutionMap({ isAuthenticated }) {
                 [bounds.lat_min, bounds.lon_min],
                 [bounds.lat_max, bounds.lon_max]
             );
-            
-            // Обновляем границы карты
             mapRef.current.fitBounds(mapBounds, {
                 padding: [50, 50],
                 maxZoom: 10,
-                animate: resetView // Анимация только при смене файла
+                animate: resetView
             });
 
             const species = speciesRes.data.species_names;
@@ -125,10 +153,10 @@ function PollutionMap({ isAuthenticated }) {
             setCurrentTime(timeRes.data.time);
             setMaxTimeIndex(timeRes.data.max_time_index);
 
-            // Обновляем слой данных
             updatePollutionLayer();
         } catch (err) {
             console.error("Ошибка загрузки данных:", err);
+            setUploadMessage("Ошибка загрузки начальных данных");
         }
     };
 
@@ -176,6 +204,7 @@ function PollutionMap({ isAuthenticated }) {
         } catch (err) {
             if (!axios.isCancel(err)) {
                 console.error("Ошибка загрузки карты:", err);
+                setUploadMessage("Ошибка загрузки карты загрязнений");
             }
         }
     };
@@ -192,13 +221,12 @@ function PollutionMap({ isAuthenticated }) {
                 setMaxTimeIndex(response.data.max_time_index);
             } catch (error) {
                 console.error("Ошибка получения времени:", error);
+                setUploadMessage("Ошибка получения времени");
             }
         };
-
         fetchTime();
     }, [timeIndex]);
 
-    // Остальной код без изменений
     const handleTimeSliderChange = (e) => {
         setTimeIndex(Number(e.target.value));
     };
@@ -237,7 +265,6 @@ function PollutionMap({ isAuthenticated }) {
             )}
             
             <div style={{ position: 'relative', flexGrow: 1 }}>
-                {/* Всегда показываем контейнер карты, но содержимое зависит от авторизации */}
                 <div id="map" style={{ height: '100%', width: '100%' }}>
                     {!isAuthenticated && (
                         <div style={{
@@ -273,7 +300,30 @@ function PollutionMap({ isAuthenticated }) {
                         boxShadow: '0 0 15px rgba(0,0,0,0.2)',
                         width: '280px'
                     }}>
-                    
+                        <div style={{ marginBottom: '15px' }}>
+                            <div style={{ marginBottom: '5px', fontWeight: '500' }}>Загрузить файл .nc:</div>
+                            <input
+                                type="file"
+                                accept=".nc"
+                                onChange={handleFileUpload}
+                                disabled={isLoading}
+                                style={{
+                                    width: '100%',
+                                    padding: '5px',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd'
+                                }}
+                            />
+                            {uploadMessage && (
+                                <div style={{
+                                    marginTop: '5px',
+                                    color: uploadMessage.includes("Ошибка") ? 'red' : 'green'
+                                }}>
+                                    {uploadMessage}
+                                </div>
+                            )}
+                        </div>
+
                         <div style={{ marginBottom: '15px' }}>
                             <div style={{ marginBottom: '5px', fontWeight: '500' }}>Набор данных:</div>
                             <select
@@ -293,7 +343,6 @@ function PollutionMap({ isAuthenticated }) {
                             </select>
                         </div>
                         
-                        {/* Остальные элементы управления без изменений */}
                         <div style={{ marginBottom: '15px' }}>
                             <div style={{ marginBottom: '5px', fontWeight: '500' }}>Время: {currentTime}</div>
                             <input

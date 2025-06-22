@@ -238,4 +238,159 @@ html, body, #root, .app-container {
   font-size: 14px;
 }
 
+/* Стили для таблицы пользователей */
+.users-table-container {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin: 20px 0;
+  background-color: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
 
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.users-table th, .users-table td {
+  border: 1px solid #ddd;
+  padding: 12px;
+  text-align: left;
+}
+
+.users-table th {
+  background-color: #282c34;
+  color: white;
+  position: sticky;
+  top: 0;
+  font-weight: normal;
+}
+
+.users-table tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.users-table tr:hover {
+  background-color: #f1f1f1;
+}
+
+.users-table button {
+  margin: 0 5px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.users-table button:first-child {
+  background-color: #2196F3;
+  color: white;
+}
+
+.users-table button:first-child:hover {
+  background-color: #0b7dda;
+}
+
+.users-table button:last-child {
+  background-color: #f44336;
+  color: white;
+}
+
+.users-table button:last-child:hover {
+  background-color: #d32f2f;
+}
+
+/* Модальное окно пользователей */
+.users-modal .modal-content {
+  width: 80%;
+  max-width: 800px;
+  padding: 25px;
+}
+
+.users-modal h2 {
+  color: #282c34;
+  margin-bottom: 20px;
+  font-size: 22px;
+}
+
+.view-users-button {
+  background-color: #2196F3;
+  color: white;
+  padding: 8px 16px;
+  font-size: 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.view-users-button:hover {
+  background-color: #0b7dda;
+}
+
+.edit-user-form div {
+  margin-bottom: 15px;
+}
+
+.edit-user-form label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+  color: #282c34;
+}
+
+.edit-user-form input, 
+.edit-user-form select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.edit-user-form button[type="submit"] {
+  background-color: #4CAF50;
+  margin-right: 10px;
+}
+
+.edit-user-form button[type="submit"]:hover {
+  background-color: #45a049;
+}
+
+.message {
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 4px;
+  color: white;
+}
+
+.message.success {
+  background-color: #4CAF50;
+}
+
+.message.error {
+  background-color: #f44336;
+}
+
+@media (max-width: 768px) {
+  .users-modal .modal-content {
+    width: 95%;
+    padding: 15px;
+  }
+  
+  .users-table th, 
+  .users-table td {
+    padding: 8px;
+    font-size: 13px;
+  }
+  
+  .users-table button {
+    padding: 4px 8px;
+    margin: 2px;
+    font-size: 12px;
+  }
+}

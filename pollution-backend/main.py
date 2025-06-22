@@ -1,16 +1,22 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 import numpy as np
 import xarray as xr
 import pandas as pd
 from pydantic import BaseModel
 import sqlite3
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import io
+import os
+import time
+import logging
 from auth import router as auth_router
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.include_router(auth_router)
@@ -23,8 +29,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Добавляем переменную для хранения текущего файла
-current_file = "res_annotated_all.nc"
+# Папка для хранения загруженных файлов
+UPLOAD_DIR = "uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# Переменная для хранения текущего файла
+current_file = os.path.join(UPLOAD_DIR, "res_annotated_all.nc")
+
+# Список допустимых переменных
+ALLOWED_VARIABLES = ["qReference", "qInit", "qRecontrsucted", "trajReference", "trajInit", "trajReconstructed"]
 
 def get_time_coord_name(dataset):
     for name in ["time", "Times"]:
@@ -33,36 +47,109 @@ def get_time_coord_name(dataset):
     raise ValueError("В файле не найдена координата времени ('time' или 'Times')")
 
 def load_dataset():
-    return xr.open_dataset(current_file)
+    try:
+        return xr.open_dataset(current_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки файла {current_file}: {str(e)}")
+
+# Endpoint для загрузки файла
+@app.post("/upload_dataset")
+async def upload_dataset(file: UploadFile = File(...)):
+    try:
+        if not file.filename.endswith('.nc'):
+            raise HTTPException(status_code=400, detail="Файл должен иметь расширение .nc")
+
+        base_name, ext = os.path.splitext(file.filename)
+        file_path = os.path.join(UPLOAD_DIR, f"{base_name}_{int(time.time())}{ext}")
+        logger.info(f"Попытка сохранить файл: {file_path}")
+
+        with open(file_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        # Проверяем и обрабатываем файл
+        try:
+            with xr.open_dataset(file_path) as ds:
+                ds = ds.load()  # загружаем в память, чтобы можно было работать после закрытия
+
+                # Переименование координат, если нужно
+                rename_map = {}
+                if 'latitude' in ds.coords or 'latitude' in ds.variables:
+                    rename_map['latitude'] = 'lat'
+                if 'longitude' in ds.coords or 'longitude' in ds.variables:
+                    rename_map['longitude'] = 'lon'
+                if rename_map:
+                    ds = ds.rename(rename_map)
+
+                # Преобразование переменных в координаты, если нужно
+                for coord in ['lat', 'lon']:
+                    if coord in ds.variables and coord not in ds.coords:
+                        ds = ds.set_coords(coord)
+
+                # Проверка наличия координат
+                for coord in ['lat', 'lon']:
+                    if coord not in ds.coords:
+                        raise HTTPException(status_code=400, detail=f"Файл не содержит координату '{coord}'")
+
+                # Проверка допустимых переменных
+                if not any(var in ds for var in ALLOWED_VARIABLES):
+                    raise HTTPException(status_code=400, detail=f"Файл не содержит ни одной допустимой переменной: {ALLOWED_VARIABLES}")
+
+            # Устанавливаем файл как текущий
+            global current_file
+            current_file = file_path
+            logger.info(f"Файл успешно загружен и установлен как текущий: {file_path}")
+
+            return {"message": f"Файл {os.path.basename(file_path)} успешно загружен", "success": True}
+
+        except HTTPException:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise
+        except Exception as e:
+            logger.error(f"Ошибка обработки файла {file_path}: {str(e)}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=400, detail=f"Ошибка обработки файла: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки файла: {str(e)}")
 
 @app.post("/set_dataset/{file_name}")
 async def set_dataset(file_name: str):
     global current_file
-    if file_name in ["res_annotated_all.nc", "res_annotated.nc"]:
-        current_file = file_name
-        try:
-            # Проверяем, что файл доступен
-            with xr.open_dataset(current_file):
-                return {
-                    "message": f"Файл данных изменен на {file_name}",
-                    "success": True
-                }
-        except Exception as e:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Ошибка загрузки файла: {str(e)}"
-            )
-    else:
-        raise HTTPException(
-            status_code=400, 
-            detail="Недопустимое имя файла. Допустимые значения: res_annotated_all.nc, res_annotated.nc"
-        )
+    file_path = os.path.join(UPLOAD_DIR, file_name)
+    
+    if not os.path.exists(file_path):
+        logger.error(f"Файл не найден: {file_path}")
+        raise HTTPException(status_code=404, detail=f"Файл {file_name} не найден")
 
-@app.get("/available_datasets")
+    try:
+        with xr.open_dataset(file_path):
+            current_file = file_path
+            logger.info(f"Установлен новый текущий файл: {file_path}")
+            return {
+                "message": f"Файл данных изменен на {file_name}",
+                "success": True
+            }
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла {file_path}: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Ошибка загрузки файла: {str(e)}")
+
+@app.get("/available_datasets", response_class=JSONResponse)
 async def get_available_datasets():
-    return {"datasets": ["res_annotated_all.nc", "res_annotated.nc"]}
+    try:
+        datasets = [f for f in os.listdir(UPLOAD_DIR) if f.endswith('.nc')]
+        logger.info(f"Возвращён список наборов данных: {datasets}")
+        return JSONResponse(
+            content={"datasets": datasets},
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+    except Exception as e:
+        logger.error(f"Ошибка получения списка файлов: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения списка файлов: {str(e)}")
 
-# Остальные endpoint'ы остаются без изменений
+# Остальные эндпоинты без изменений
 @app.get("/pollution/bounds")
 async def get_bounds():
     dataset = load_dataset()
@@ -103,8 +190,7 @@ async def get_data_types():
         dataset = load_dataset()
         available_types = []
         
-        for data_type in ["qReference", "qInit", "qRecontrsucted", 
-                         "trajReference", "trajInit", "trajReconstructed"]:
+        for data_type in ALLOWED_VARIABLES:
             if data_type in dataset:
                 available_types.append(data_type)
         
@@ -114,8 +200,11 @@ async def get_data_types():
 
 def get_variable_data(dataset, data_type, species_index, time_index, level_index):
     time_coord = get_time_coord_name(dataset)
-    data = dataset[data_type].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
-    return np.nan_to_num(data, nan=0.0)
+    try:
+        data = dataset[data_type].isel(spec=species_index, **{time_coord: time_index, "levCoord": level_index})
+        return np.nan_to_num(data, nan=0.0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения данных переменной {data_type}: {str(e)}")
 
 @app.get("/pollution/image")
 async def get_pollution_image(
@@ -141,7 +230,6 @@ async def get_pollution_image(
 
         species_index = species_names.index(species)
 
-        # Получаем данные для выбранной переменной
         data = get_variable_data(dataset, data_type, species_index, time_index, level_index)
 
         fig, ax = plt.subplots(figsize=(6, 4))
@@ -217,23 +305,17 @@ async def get_pollution_data(time_index: int = 0, level_index: int = 0):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    
-    # Модель для входных данных
+# Модель и эндпоинты для авторизации
 class UserLogin(BaseModel):
     login: str
     password: str
 
-# Функция для проверки логина и пароля
 def authenticate_user(login: str, password: str):
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-
-    # Ищем пользователя в базе данных по логину и паролю
     cursor.execute('SELECT * FROM users WHERE login = ? AND password = ?', (login, password))
     user = cursor.fetchone()
-
     conn.close()
-
     if user is None:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     return user
@@ -243,10 +325,14 @@ async def login(user: UserLogin):
     authenticated_user = authenticate_user(user.login, user.password)
     return {
         "message": f"Добро пожаловать, {authenticated_user[1]}!",
-        "name": authenticated_user[1],  # Имя пользователя
-        "role": authenticated_user[4]   # Роль пользователя
+        "name": authenticated_user[1],
+        "role": authenticated_user[4]
     }
 
 @app.post("/logout")
 async def logout():
     return {"message": "Вы вышли из системы"}
+
+@app.get("/")
+def read_root():
+    return {"message": "Backend работает"}
