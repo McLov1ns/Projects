@@ -18,7 +18,6 @@ function PollutionMap({ isAuthenticated }) {
     const [selectedDataset, setSelectedDataset] = useState("res_annotated_all.nc");
     const [isPlaying, setIsPlaying] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const [uploadMessage, setUploadMessage] = useState("");
     const playIntervalRef = useRef(null);
     const abortControllerRef = useRef(null);
 
@@ -29,7 +28,6 @@ function PollutionMap({ isAuthenticated }) {
             setAvailableDatasets(response.data.datasets);
         } catch (err) {
             console.error("Ошибка загрузки списка наборов данных:", err);
-            setUploadMessage("Ошибка загрузки списка наборов данных");
         }
     };
 
@@ -59,12 +57,10 @@ function PollutionMap({ isAuthenticated }) {
         if (!file) return;
 
         if (!file.name.endsWith('.nc')) {
-            setUploadMessage("Ошибка: Пожалуйста, выберите файл формата .nc");
             return;
         }
 
         setIsLoading(true);
-        setUploadMessage("");
 
         try {
             const formData = new FormData();
@@ -75,14 +71,13 @@ function PollutionMap({ isAuthenticated }) {
             });
 
             if (response.data.success) {
-                setUploadMessage("Файл успешно загружен!");
                 setTimeout(fetchDatasets, 500); // Даем время файловой системе
-                const uploadedName = response.data.filename || file.name; // используем имя, возвращённое сервером
+                const uploadedName = response.data.filename || file.name;
                 setSelectedDataset(uploadedName);
                 await handleDatasetChange(uploadedName);
             }
         } catch (err) {
-            setUploadMessage(err.response?.data?.detail || "Ошибка при загрузке файла");
+            console.error("Ошибка при загрузке файла:", err);
         } finally {
             setIsLoading(false);
         }
@@ -91,7 +86,6 @@ function PollutionMap({ isAuthenticated }) {
     // Обработчик изменения набора данных
     const handleDatasetChange = async (dataset) => {
         setIsLoading(true);
-        setUploadMessage("");
         try {
             if (isPlaying) {
                 clearInterval(playIntervalRef.current);
@@ -109,7 +103,6 @@ function PollutionMap({ isAuthenticated }) {
             }
         } catch (err) {
             console.error("Ошибка смены набора данных:", err);
-            setUploadMessage(err.response?.data?.detail || "Ошибка при смене набора данных");
         } finally {
             setIsLoading(false);
         }
@@ -156,7 +149,6 @@ function PollutionMap({ isAuthenticated }) {
             updatePollutionLayer();
         } catch (err) {
             console.error("Ошибка загрузки данных:", err);
-            setUploadMessage("Ошибка загрузки начальных данных");
         }
     };
 
@@ -204,7 +196,6 @@ function PollutionMap({ isAuthenticated }) {
         } catch (err) {
             if (!axios.isCancel(err)) {
                 console.error("Ошибка загрузки карты:", err);
-                setUploadMessage("Ошибка загрузки карты загрязнений");
             }
         }
     };
@@ -221,7 +212,6 @@ function PollutionMap({ isAuthenticated }) {
                 setMaxTimeIndex(response.data.max_time_index);
             } catch (error) {
                 console.error("Ошибка получения времени:", error);
-                setUploadMessage("Ошибка получения времени");
             }
         };
         fetchTime();
@@ -314,14 +304,6 @@ function PollutionMap({ isAuthenticated }) {
                                     border: '1px solid #ddd'
                                 }}
                             />
-                            {uploadMessage && (
-                                <div style={{
-                                    marginTop: '5px',
-                                    color: uploadMessage.includes("Ошибка") ? 'red' : 'green'
-                                }}>
-                                    {uploadMessage}
-                                </div>
-                            )}
                         </div>
 
                         <div style={{ marginBottom: '15px' }}>
@@ -423,4 +405,5 @@ function PollutionMap({ isAuthenticated }) {
         </div>
     );
 }
+
 export default PollutionMap;
